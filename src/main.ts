@@ -1,20 +1,14 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { ConfigService } from '@nestjs/config';
-import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  const configService = app.get(ConfigService);
 
-  // Security
-  app.use(helmet());
-
-  // CORS
+  // Enable CORS
   app.enableCors({
-    origin: configService.get('FRONTEND_URL'),
+    origin: process.env.FRONTEND_URL || 'http://localhost:3001',
     credentials: true,
   });
 
@@ -24,17 +18,14 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-      transformOptions: {
-        enableImplicitConversion: true,
-      },
     }),
   );
 
-  // Swagger Configuration
+  // Swagger configuration
   const config = new DocumentBuilder()
     .setTitle('HNG Stage 8 - Wallet Service')
     .setDescription(
-      'Wallet service with Paystack integration, JWT authentication & API Keys',
+      'Production-grade wallet service with Paystack integration, supporting JWT and API Key authentication',
     )
     .setVersion('1.0')
     .addBearerAuth(
@@ -42,9 +33,7 @@ async function bootstrap() {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'JWT',
-        name: 'JWT',
-        description: 'Enter JWT token',
-        in: 'header',
+        description: 'Enter your JWT token',
       },
       'JWT',
     )
@@ -53,25 +42,19 @@ async function bootstrap() {
         type: 'apiKey',
         name: 'x-api-key',
         in: 'header',
-        description: 'Enter API Key',
+        description: 'Enter your API key (e.g., sk_live_...)',
       },
       'API-Key',
     )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document, {
-    swaggerOptions: {
-      persistAuthorization: true,
-      tagsSorter: 'alpha',
-      operationsSorter: 'alpha',
-    },
-  });
+  SwaggerModule.setup('api/docs', app, document);
 
-  const port = configService.get('PORT') || 3000;
-  await app.listen(port);
+  const port = process.env.PORT || 3000;
+  await app.listen(port, '0.0.0.0');
 
-  console.log(`🚀 Application is running on: http://localhost:${port}`);
-  console.log(`📚 Swagger documentation: http://localhost:${port}/api/docs`);
+  console.log(`\n🚀 Application is running on: http://localhost:${port}`);
+  console.log(`📚 Swagger documentation: http://localhost:${port}/api/docs\n`);
 }
 bootstrap();

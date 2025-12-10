@@ -1,7 +1,7 @@
 import {
   Entity,
-  PrimaryGeneratedColumn,
   Column,
+  PrimaryGeneratedColumn,
   CreateDateColumn,
   UpdateDateColumn,
   ManyToOne,
@@ -10,48 +10,39 @@ import {
 } from 'typeorm';
 import { Wallet } from './wallet.entity';
 
-export enum TransactionType {
-  DEPOSIT = 'deposit',
-  TRANSFER_IN = 'transfer_in',
-  TRANSFER_OUT = 'transfer_out',
-}
-
-export enum TransactionStatus {
-  PENDING = 'pending',
-  SUCCESS = 'success',
-  FAILED = 'failed',
-}
-
 @Entity('transactions')
+@Index(['reference'], { unique: true })
 export class Transaction {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'wallet_id' })
-  @Index()
+  @Column({ name: 'wallet_id', type: 'uuid' })
   walletId: string;
 
-  @Column({
-    type: 'enum',
-    enum: TransactionType,
-  })
-  type: TransactionType;
-
-  @Column({ type: 'bigint' })
-  amount: number; // In KOBO
+  @ManyToOne(() => Wallet, (wallet) => wallet.transactions)
+  @JoinColumn({ name: 'wallet_id' })
+  wallet: Wallet;
 
   @Column({
     type: 'enum',
-    enum: TransactionStatus,
-    default: TransactionStatus.PENDING,
+    enum: ['deposit', 'transfer_in', 'transfer_out'],
   })
-  status: TransactionStatus;
+  type: 'deposit' | 'transfer_in' | 'transfer_out';
+
+  @Column('bigint')
+  amount: number;
+
+  @Column({
+    type: 'enum',
+    enum: ['pending', 'success', 'failed'],
+    default: 'pending',
+  })
+  status: 'pending' | 'success' | 'failed';
 
   @Column({ unique: true })
-  @Index()
   reference: string;
 
-  @Column({ type: 'jsonb', nullable: true })
+  @Column('jsonb', { nullable: true })
   metadata: Record<string, any>;
 
   @CreateDateColumn({ name: 'created_at' })
@@ -59,9 +50,4 @@ export class Transaction {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
-
-  // Relations
-  @ManyToOne(() => Wallet, (wallet) => wallet.transactions)
-  @JoinColumn({ name: 'wallet_id' })
-  wallet: Wallet;
 }

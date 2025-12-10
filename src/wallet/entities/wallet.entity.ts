@@ -1,10 +1,10 @@
 import {
   Entity,
-  PrimaryGeneratedColumn,
   Column,
+  PrimaryGeneratedColumn,
   CreateDateColumn,
   UpdateDateColumn,
-  ManyToOne,
+  OneToOne,
   OneToMany,
   JoinColumn,
   Index,
@@ -13,32 +13,31 @@ import { User } from '../../users/entities/user.entity';
 import { Transaction } from './transaction.entity';
 
 @Entity('wallets')
+@Index(['userId'], { unique: true })
+@Index(['walletNumber'], { unique: true })
 export class Wallet {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'user_id', unique: true })
-  @Index()
+  @Column({ name: 'user_id', type: 'uuid' })
   userId: string;
 
-  @Column({ name: 'wallet_number', unique: true })
-  @Index()
+  @OneToOne(() => User, (user) => user.wallet, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
+
+  @Column({ name: 'wallet_number', length: 10 })
   walletNumber: string;
 
-  @Column({ type: 'bigint', default: 0 })
-  balance: number; // Stored in KOBO
+  @Column('bigint', { default: 0 })
+  balance: number;
+
+  @OneToMany(() => Transaction, (transaction) => transaction.wallet)
+  transactions: Transaction[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
-
-  // Relations
-  @ManyToOne(() => User, (user) => user.wallet)
-  @JoinColumn({ name: 'user_id' })
-  user: User;
-
-  @OneToMany(() => Transaction, (transaction) => transaction.wallet)
-  transactions: Transaction[];
 }
