@@ -25,7 +25,6 @@ services:
           name: wallet-db
           property: connectionString
       - key: JWT_SECRET
-        generateValue: true
         sync: false
       - key: JWT_EXPIRES_IN
         value: 7d
@@ -34,11 +33,11 @@ services:
       - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: GOOGLE_CALLBACK_URL
-        value: https://wallet-service.onrender.com/auth/google/callback
+        sync: false
       - key: PAYSTACK_SECRET_KEY
         sync: false
       - key: PAYSTACK_PUBLIC_KEY
         sync: false
       - key: FRONTEND_URL
-        value: https://your-frontend.vercel.app
+        sync: false
     healthCheckPath: /api/docs
