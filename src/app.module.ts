@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { AppController } from './app.controller';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { WalletModule } from './wallet/wallet.module';
@@ -52,5 +53,6 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
     WalletModule,
     ApiKeysModule,
   ],
+  controllers: [AppController],
 })
 export class AppModule {}
