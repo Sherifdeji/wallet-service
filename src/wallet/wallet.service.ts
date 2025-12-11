@@ -196,91 +196,6 @@ export class WalletService {
   }
 
   /**
-   * Credit wallet from Paystack webhook (IDEMPOTENT & ATOMIC)
-   * CRITICAL: This is the ONLY method that credits wallets
-   * CRITICAL: Must be idempotent (no double-crediting)
-   * CRITICAL: Must be atomic (use database transaction)
-   */
-  async creditWalletFromWebhook(
-    reference: string,
-    amount: number,
-    paystackData: any,
-  ): Promise<void> {
-    this.logger.log(`Processing webhook for reference: ${reference}`);
-
-    // Use database transaction for atomicity
-    await this.dataSource.transaction(async (manager) => {
-      // Find transaction with pessimistic write lock (prevents race conditions)
-      const transaction = await manager.findOne(Transaction, {
-        where: { reference },
-        lock: { mode: 'pessimistic_write' }, // Lock row for update
-      });
-
-      if (!transaction) {
-        this.logger.error(`Transaction not found: ${reference}`);
-        throw new NotFoundException('Transaction not found');
-      }
-
-      // IDEMPOTENCY CHECK: If already processed, do nothing
-      if (transaction.status === 'success') {
-        this.logger.warn(
-          `Transaction already processed (idempotency): ${reference}`,
-        );
-        return; // Exit early, wallet already credited
-      }
-
-      // Verify transaction type is deposit
-      if (transaction.type !== 'deposit') {
-        this.logger.error(
-          `Invalid transaction type for webhook: ${transaction.type}`,
-        );
-        throw new BadRequestException('Invalid transaction type');
-      }
-
-      // Verify amount matches
-      if (Number(transaction.amount) !== amount) {
-        this.logger.error(
-          `Amount mismatch: Expected ${transaction.amount}, Got ${amount}`,
-        );
-        throw new BadRequestException('Amount mismatch');
-      }
-
-      // Update transaction status to success
-      transaction.status = 'success';
-      transaction.metadata = {
-        ...transaction.metadata,
-        paystack_webhook: paystackData,
-        processed_at: new Date().toISOString(),
-      };
-      await manager.save(Transaction, transaction);
-
-      this.logger.log(`Transaction marked as success: ${reference}`);
-
-      // Find and lock wallet for update
-      const wallet = await manager.findOne(Wallet, {
-        where: { id: transaction.walletId },
-        lock: { mode: 'pessimistic_write' }, // Lock row for update
-      });
-
-      if (!wallet) {
-        this.logger.error(`Wallet not found: ${transaction.walletId}`);
-        throw new NotFoundException('Wallet not found');
-      }
-
-      // Credit wallet (atomic operation within transaction)
-      const previousBalance = wallet.balance;
-      wallet.balance = Number(wallet.balance) + amount; // Ensure number type
-      await manager.save(Wallet, wallet);
-
-      this.logger.log(
-        `Wallet ${wallet.walletNumber} credited: ${previousBalance} → ${wallet.balance} KOBO`,
-      );
-    });
-
-    this.logger.log(`Webhook processing completed successfully: ${reference}`);
-  }
-
-  /**
    * Get wallet balance
    */
   async getBalance(userId: string): Promise<{
@@ -539,6 +454,72 @@ export class WalletService {
   async findByUserId(userId: string): Promise<Wallet | null> {
     return await this.walletRepository.findOne({
       where: { userId },
+    });
+  }
+
+  /**
+   * Credit wallet from webhook (idempotent)
+   */
+  async creditWalletFromWebhook(
+    reference: string,
+    amount: number,
+    webhookData: any,
+  ): Promise<{ status: string; message: string }> {
+    return await this.dataSource.transaction(async (manager) => {
+      // Find transaction with pessimistic lock
+      const transaction = await manager.findOne(Transaction, {
+        where: { reference },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!transaction) {
+        throw new NotFoundException('Transaction not found');
+      }
+
+      // Idempotency check: if already processed, return success
+      if (transaction.status === 'success') {
+        this.logger.log(
+          `Transaction ${reference} already processed (idempotent)`,
+        );
+        return {
+          status: 'success',
+          message: 'Transaction already processed',
+        };
+      }
+
+      // Find wallet with pessimistic lock
+      const wallet = await manager.findOne(Wallet, {
+        where: { id: transaction.walletId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!wallet) {
+        throw new NotFoundException('Wallet not found');
+      }
+
+      // Update transaction status
+      transaction.status = 'success';
+      transaction.metadata = {
+        ...transaction.metadata,
+        webhook_data: webhookData,
+        processed_at: new Date().toISOString(),
+      };
+
+      // Credit wallet
+      wallet.balance = Number(wallet.balance) + amount;
+
+      // Save both
+      await manager.save(Transaction, transaction);
+      await manager.save(Wallet, wallet);
+
+      this.logger.log(
+        `Wallet ${wallet.walletNumber} credited with ${amount} KOBO. New balance: ${wallet.balance}`,
+      );
+
+      return {
+        status: 'success',
+        message: 'Wallet credited successfully',
+      };
     });
   }
 }

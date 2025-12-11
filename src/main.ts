@@ -10,9 +10,8 @@ import { DataSource } from 'typeorm';
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
-  // Create app WITHOUT global JSON parsing (we'll configure it manually)
   const app = await NestFactory.create(AppModule, {
-    rawBody: true, // Enable raw body buffer
+    rawBody: true,
   });
 
   const configService = app.get(ConfigService);
@@ -26,58 +25,11 @@ async function bootstrap() {
       logger.log('✅ Migrations executed successfully');
     } catch (error) {
       logger.error('❌ Migration failed:', error);
-      // Don't exit in production - app might still work with existing schema
-      // Only log the error
       if (configService.get('NODE_ENV') !== 'production') {
         process.exit(1);
       }
     }
   }
-
-  // CRITICAL: Configure raw body middleware for webhook endpoint
-  // This preserves the raw request body for signature verification
-  app.use('/wallet/paystack/webhook', (req, res, next) => {
-    if (req.method === 'POST') {
-      getRawBody(
-        req,
-        {
-          length: req.headers['content-length'],
-          limit: '1mb',
-          encoding: 'utf8',
-        },
-        (err, string) => {
-          if (err) {
-            logger.error('Error reading raw body', err);
-            return next(err);
-          }
-          // Store raw body for signature verification
-          req.rawBody = string;
-          // Parse JSON manually and attach to req.body
-          try {
-            req.body = JSON.parse(string);
-          } catch (parseError) {
-            logger.error('Error parsing JSON body', parseError);
-            return next(parseError);
-          }
-          next();
-        },
-      );
-    } else {
-      next();
-    }
-  });
-
-  // Global JSON parsing for all OTHER routes (not webhook)
-  app.use(
-    json({
-      verify: (req: any, res, buf, encoding) => {
-        // Skip webhook route (already handled above)
-        if (req.url !== '/wallet/paystack/webhook') {
-          return;
-        }
-      },
-    }),
-  );
 
   // Enable CORS
   app.enableCors({
