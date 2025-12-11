@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import { ConfigService } from '@nestjs/config';
 import { json } from 'express';
 import getRawBody from 'raw-body';
+import { DataSource } from 'typeorm/browser/data-source/index.js';
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
@@ -15,6 +16,13 @@ async function bootstrap() {
   });
 
   const configService = app.get(ConfigService);
+
+  // Run migrations on startup (production only)
+  if (configService.get('RUN_MIGRATIONS') === 'true') {
+    const dataSource = app.get(DataSource);
+    await dataSource.runMigrations();
+    console.log('✅ Migrations executed successfully');
+  }
 
   // CRITICAL: Configure raw body middleware for webhook endpoint
   // This preserves the raw request body for signature verification
