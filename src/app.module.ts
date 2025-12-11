@@ -12,7 +12,7 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
     // Global configuration
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath: process.env.NODE_ENV === 'production' ? undefined : '.env',
     }),
 
     // Database configuration
@@ -30,13 +30,19 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',
+        ssl:
+          configService.get('NODE_ENV') === 'production'
+            ? {
+                rejectUnauthorized: false,
+              }
+            : false,
       }),
     }),
     // Rate limiting
     ThrottlerModule.forRoot([
       {
         ttl: 60000, // 60 seconds
-        limit: 100, // 100 requests per minute
+        limit: 10, // 10 requests per minute
       },
     ]),
 

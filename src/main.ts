@@ -1,15 +1,77 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
-
+import helmet from 'helmet';
+import { ConfigService } from '@nestjs/config';
+import { json } from 'express';
+import getRawBody from 'raw-body';
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const logger = new Logger('Bootstrap');
+
+  // Create app WITHOUT global JSON parsing (we'll configure it manually)
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true, // Enable raw body buffer
+  });
+
+  const configService = app.get(ConfigService);
+
+  // CRITICAL: Configure raw body middleware for webhook endpoint
+  // This preserves the raw request body for signature verification
+  app.use('/wallet/paystack/webhook', (req, res, next) => {
+    if (req.method === 'POST') {
+      getRawBody(
+        req,
+        {
+          length: req.headers['content-length'],
+          limit: '1mb',
+          encoding: 'utf8',
+        },
+        (err, string) => {
+          if (err) {
+            logger.error('Error reading raw body', err);
+            return next(err);
+          }
+          // Store raw body for signature verification
+          req.rawBody = string;
+          // Parse JSON manually and attach to req.body
+          try {
+            req.body = JSON.parse(string);
+          } catch (parseError) {
+            logger.error('Error parsing JSON body', parseError);
+            return next(parseError);
+          }
+          next();
+        },
+      );
+    } else {
+      next();
+    }
+  });
+
+  // Global JSON parsing for all OTHER routes (not webhook)
+  app.use(
+    json({
+      verify: (req: any, res, buf, encoding) => {
+        // Skip webhook route (already handled above)
+        if (req.url !== '/wallet/paystack/webhook') {
+          return;
+        }
+      },
+    }),
+  );
 
   // Enable CORS
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3001',
+    origin: process.env.FRONTEND_URL || '*', // Allow all for initial deployment/testing
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'x-api-key',
+      'x-paystack-signature',
+    ],
   });
 
   // Global validation pipe
@@ -18,8 +80,14 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
     }),
   );
+
+  // Security headers
+  app.use(helmet());
 
   // Swagger configuration
   const config = new DocumentBuilder()

@@ -12,6 +12,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   Logger,
+  RawBodyRequest,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,6 +22,7 @@ import {
   ApiSecurity,
   ApiQuery,
 } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { WalletService } from './wallet.service';
 import { PaystackService } from './paystack.service';
 import { DualAuthGuard } from '../auth/guards/dual-auth.guard';
@@ -28,6 +30,15 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../auth/decorators/permissions.decorator';
 import { InitializeDepositDto } from './dto/initialize-deposit.dto';
 import { TransferDto } from './dto/transfer.dto';
+
+// Extend Express Request type to include rawBody
+declare global {
+  namespace Express {
+    interface Request {
+      rawBody?: string;
+    }
+  }
+}
 
 @ApiTags('Wallet')
 @Controller('wallet')
@@ -98,33 +109,54 @@ export class WalletController {
   })
   async handlePaystackWebhook(
     @Headers('x-paystack-signature') signature: string,
+    @Req() req: Request,
     @Body() payload: any,
   ) {
     this.logger.log('Received Paystack webhook');
 
-    // CRITICAL: Verify Paystack signature
-    const rawBody = JSON.stringify(payload);
+    // CRITICAL: Get raw body for signature verification
+    const rawBody = req.rawBody;
+
+    if (!rawBody) {
+      this.logger.error('❌ Raw body not available for signature verification');
+      throw new BadRequestException(
+        'Raw body required for signature verification',
+      );
+    }
+
+    if (!signature) {
+      this.logger.error('❌ Missing Paystack signature header');
+      throw new UnauthorizedException('Missing x-paystack-signature header');
+    }
+
+    this.logger.debug(`Raw body length: ${rawBody.length} bytes`);
+    this.logger.debug(`Signature: ${signature.substring(0, 20)}...`);
+
+    // CRITICAL: Verify Paystack signature using raw body
     const isValid = this.paystackService.verifyWebhookSignature(
       signature,
       rawBody,
     );
 
     if (!isValid) {
-      this.logger.error('Invalid Paystack webhook signature');
-      throw new UnauthorizedException('Invalid signature');
+      this.logger.error('❌ Invalid Paystack webhook signature');
+      this.logger.error(`Expected signature computation from raw body failed`);
+      throw new UnauthorizedException('Invalid webhook signature');
     }
 
-    this.logger.log('Paystack webhook signature verified');
+    this.logger.log('✅ Paystack webhook signature verified successfully');
 
-    // Extract event data
+    // Extract event data from parsed payload
     const { event, data } = payload;
+
+    this.logger.log(`📨 Webhook event: ${event}`);
 
     // Handle charge.success event
     if (event === 'charge.success') {
       const { reference, amount, status } = data;
 
       this.logger.log(
-        `Processing charge.success: ${reference}, amount: ${amount}, status: ${status}`,
+        `💳 Processing charge.success: reference=${reference}, amount=${amount} KOBO, status=${status}`,
       );
 
       // Only process if payment was successful
@@ -137,25 +169,26 @@ export class WalletController {
             data,
           );
 
-          this.logger.log(`Wallet credited successfully: ${reference}`);
+          this.logger.log(`✅ Wallet credited successfully: ${reference}`);
         } catch (error) {
           this.logger.error(
-            `Error crediting wallet: ${error.message}`,
+            `❌ Error crediting wallet for ${reference}: ${error.message}`,
             error.stack,
           );
           // Return 200 to Paystack even if processing fails
-          // (Paystack will retry webhook if we return error)
+          // (Prevent infinite retries for application errors)
+          // Transaction will remain in pending/failed state for manual review
         }
       } else {
         this.logger.warn(
-          `Payment status is not success: ${status} for ${reference}`,
+          `⚠️ Payment status is not success: ${status} for ${reference}`,
         );
       }
     } else {
-      this.logger.log(`Ignoring webhook event: ${event}`);
+      this.logger.log(`ℹ️ Ignoring webhook event: ${event}`);
     }
 
-    // Always return success to Paystack
+    // Always return success to Paystack to acknowledge receipt
     return { status: true };
   }
 
@@ -243,6 +276,7 @@ export class WalletController {
       },
     },
   })
+  @ApiResponse({ status: 404, description: 'Wallet not found' })
   async getWalletInfo(@Req() req: any) {
     const userId = req.user.userId || req.user.id;
     return await this.walletService.getWalletInfo(userId);

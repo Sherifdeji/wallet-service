@@ -148,8 +148,8 @@ export class WalletService {
     try {
       // Call Paystack API to initialize transaction
       const paystackResponse = await this.paystackService.initializeTransaction(
-        user.email,
         amount, // Amount in KOBO
+        user.email,
         reference,
       );
 
