@@ -13,7 +13,7 @@ services:
     runtime: node
     region: oregon
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm install && npm run build && npm run migration:run
     startCommand: npm run start:prod
     envVars:
       - key: NODE_ENV
@@ -24,6 +24,8 @@ services:
         fromDatabase:
           name: wallet-db
           property: connectionString
+      - key: RUN_MIGRATIONS
+        value: 'true'
       - key: JWT_SECRET
         sync: false
       - key: JWT_EXPIRES_IN
@@ -38,6 +40,8 @@ services:
         sync: false
       - key: PAYSTACK_PUBLIC_KEY
         sync: false
+      - key: PAYSTACK_CALLBACK_URL
+        value: https://wallet-service-1-5kml.onrender.com/wallet/paystack/webhook
       - key: FRONTEND_URL
         sync: false
     healthCheckPath: /api/docs
