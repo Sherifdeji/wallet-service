@@ -17,10 +17,17 @@ export class AuthService {
    * Creates user and wallet if not exists
    * Returns JWT token
    */
-  async googleLogin(googleUser: {
-    googleId: string;
-    email: string;
-  }): Promise<{ access_token: string }> {
+  async googleLogin(googleUser: { googleId: string; email: string }): Promise<{
+    status: string;
+    data: {
+      access_token: string;
+      user: {
+        id: string;
+        email: string;
+        createdAt: Date;
+      };
+    };
+  }> {
     // Check if user exists by Google ID
     let user = await this.usersService.findByGoogleId(googleUser.googleId);
 
@@ -39,7 +46,17 @@ export class AuthService {
     const payload = { sub: user.id, email: user.email };
     const access_token = this.jwtService.sign(payload);
 
-    return { access_token };
+    return {
+      status: 'success',
+      data: {
+        access_token,
+        user: {
+          id: user.id,
+          email: user.email,
+          createdAt: user.createdAt,
+        },
+      },
+    };
   }
 
   /**
