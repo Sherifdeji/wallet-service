@@ -6,7 +6,7 @@ import helmet from 'helmet';
 import { ConfigService } from '@nestjs/config';
 import { json } from 'express';
 import getRawBody from 'raw-body';
-import { DataSource } from 'typeorm/browser/data-source/index.js';
+import { DataSource } from 'typeorm';
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
@@ -19,9 +19,19 @@ async function bootstrap() {
 
   // Run migrations on startup (production only)
   if (configService.get('RUN_MIGRATIONS') === 'true') {
-    const dataSource = app.get(DataSource);
-    await dataSource.runMigrations();
-    console.log('✅ Migrations executed successfully');
+    try {
+      const dataSource = app.get(DataSource);
+      logger.log('🔄 Running database migrations...');
+      await dataSource.runMigrations();
+      logger.log('✅ Migrations executed successfully');
+    } catch (error) {
+      logger.error('❌ Migration failed:', error);
+      // Don't exit in production - app might still work with existing schema
+      // Only log the error
+      if (configService.get('NODE_ENV') !== 'production') {
+        process.exit(1);
+      }
+    }
   }
 
   // CRITICAL: Configure raw body middleware for webhook endpoint
