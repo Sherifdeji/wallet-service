@@ -1,4 +1,4 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import * as crypto from 'crypto';
@@ -47,6 +47,7 @@ export class PaystackService {
 
   /**
    * CRITICAL: Verify Paystack webhook signature
+   * Per copilot instructions: Use HMAC SHA512
    *
    * @param signature - Signature from x-paystack-signature header
    * @param rawBody - RAW request body (NOT JSON-parsed)
@@ -98,14 +99,43 @@ export class PaystackService {
 
   /**
    * Initialize Paystack transaction
+   * Per copilot instructions: Send amounts in KOBO
+   *
+   * @param amount - Amount in KOBO (1 Naira = 100 Kobo)
+   * @param email - User's email
+   * @param reference - Unique transaction reference
+   * @returns Paystack response with authorization_url
    */
   async initializeTransaction(
     amount: number,
     email: string,
     reference: string,
-  ): Promise<any> {
+  ): Promise<{
+    authorization_url: string;
+    access_code: string;
+    reference: string;
+  }> {
+    // Validate inputs per copilot instructions
+    if (!amount || amount <= 0) {
+      throw new BadRequestException('Amount must be greater than 0');
+    }
+
+    if (amount < 100) {
+      throw new BadRequestException(
+        'Minimum deposit amount is 100 KOBO (₦1.00)',
+      );
+    }
+
+    if (!email || !email.includes('@')) {
+      throw new BadRequestException('Valid email is required');
+    }
+
+    if (!reference) {
+      throw new BadRequestException('Transaction reference is required');
+    }
+
     this.logger.log(
-      `Initializing Paystack transaction: ${reference} for ${email} with amount ${amount} KOBO`,
+      `Initializing Paystack transaction: ${reference} for ${email} with amount ${amount} KOBO (₦${amount / 100})`,
     );
 
     try {
@@ -113,49 +143,89 @@ export class PaystackService {
         '/transaction/initialize',
         {
           email,
-          amount, // Already in KOBO
+          amount, // CRITICAL: Already in KOBO per copilot instructions
           reference,
           currency: 'NGN',
+          // IMPORTANT: Don't send callback_url here
+          // Paystack will use the webhook URL configured in dashboard
+          // callback_url is for redirect after payment (optional)
           callback_url:
             this.configService.get<string>('FRONTEND_URL') ||
-            'http://localhost:3001',
+            'http://localhost:3001/payment/success',
+          metadata: {
+            custom_fields: [
+              {
+                display_name: 'Reference',
+                variable_name: 'reference',
+                value: reference,
+              },
+            ],
+          },
         },
       );
+
+      if (!response.data.status) {
+        this.logger.error(
+          `❌ Paystack initialization failed: ${response.data.message}`,
+        );
+        throw new BadRequestException(
+          response.data.message || 'Failed to initialize transaction',
+        );
+      }
 
       this.logger.log(`✅ Paystack transaction initialized: ${reference}`);
       this.logger.debug(
         `Authorization URL: ${response.data.data.authorization_url}`,
       );
 
-      return response.data;
+      // Return the required fields per copilot instructions
+      return {
+        authorization_url: response.data.data.authorization_url,
+        access_code: response.data.data.access_code,
+        reference: response.data.data.reference,
+      };
     } catch (error) {
-      if (error.response) {
-        this.logger.error(
-          `❌ Paystack API error (${error.response.status}): ${JSON.stringify(error.response.data)}`,
-        );
-
-        if (error.response.status === 401) {
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
           this.logger.error(
-            '❌ Authentication failed! Check PAYSTACK_SECRET_KEY',
+            `❌ Paystack API error (${error.response.status}): ${JSON.stringify(error.response.data)}`,
+          );
+
+          if (error.response.status === 401) {
+            this.logger.error(
+              '❌ Authentication failed! Check PAYSTACK_SECRET_KEY',
+            );
+            this.logger.error(
+              `Current key format: ${this.secretKey.substring(0, 10)}...`,
+            );
+          }
+
+          const message =
+            error.response.data.message ||
+            error.response.data.error ||
+            'Paystack API error';
+          throw new BadRequestException(message);
+        } else if (error.request) {
+          this.logger.error(
+            '❌ No response from Paystack. Check internet connection.',
+          );
+          throw new BadRequestException(
+            'Unable to connect to Paystack. Please try again.',
           );
         }
-
-        throw new Error(error.response.data.message || 'Paystack API error');
-      } else if (error.request) {
-        this.logger.error(
-          '❌ No response from Paystack. Check internet connection.',
-        );
-        throw new Error('No response from Paystack');
-      } else {
-        this.logger.error(`❌ Paystack initialization error: ${error.message}`);
-        throw new Error(error.message);
       }
+
+      this.logger.error(`❌ Paystack initialization error: ${error.message}`);
+      throw new BadRequestException(
+        error.message || 'Failed to initialize transaction',
+      );
     }
   }
 
   /**
    * Verify transaction (optional - for manual verification)
-   * only webhooks should credit wallets
+   * NOTE: Per copilot instructions, only webhooks should credit wallets
+   * This is for read-only verification
    */
   async verifyTransaction(reference: string): Promise<any> {
     this.logger.log(`Verifying transaction: ${reference}`);
@@ -165,18 +235,26 @@ export class PaystackService {
         `/transaction/verify/${reference}`,
       );
 
+      if (!response.data.status) {
+        throw new BadRequestException(
+          response.data.message || 'Verification failed',
+        );
+      }
+
       this.logger.log(`✅ Transaction verified: ${reference}`);
-      return response.data;
+      return response.data.data;
     } catch (error) {
-      if (error.response) {
+      if (axios.isAxiosError(error) && error.response) {
         this.logger.error(
           `❌ Transaction verification error: ${JSON.stringify(error.response.data)}`,
         );
-        throw new Error(error.response.data.message || 'Verification failed');
+        throw new BadRequestException(
+          error.response.data.message || 'Verification failed',
+        );
       }
 
       this.logger.error(`❌ Verification error: ${error.message}`);
-      throw new Error(error.message);
+      throw new BadRequestException(error.message || 'Verification failed');
     }
   }
 }

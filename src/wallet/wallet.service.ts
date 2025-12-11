@@ -91,31 +91,41 @@ export class WalletService {
   }
 
   /**
-   * Initialize Paystack deposit (REAL IMPLEMENTATION)
-   * Calls Paystack API and returns payment URL
+   * Initialize deposit via Paystack
+   *
+   * @param userId - User ID
+   * @param amount - Amount in KOBO (1 Naira = 100 Kobo)
+   * @returns Payment URL and reference
    */
   async initializeDeposit(
     userId: string,
     amount: number,
   ): Promise<{
-    reference: string;
-    authorization_url: string;
-    access_code: string;
+    status: string;
+    data: {
+      reference: string;
+      authorization_url: string;
+    };
+    message: string;
   }> {
-    this.logger.log(`Initializing deposit for user ${userId}: ${amount} KOBO`);
-
-    // Validate amount
-    if (amount < 100) {
-      throw new BadRequestException('Minimum deposit is 100 KOBO (1 Naira)');
+    // Validate amount per copilot instructions
+    if (!amount || amount <= 0) {
+      throw new BadRequestException('Amount must be greater than 0');
     }
 
-    // Find user (to get email for Paystack)
+    if (amount < 100) {
+      throw new BadRequestException(
+        'Minimum deposit amount is 100 KOBO (₦1.00)',
+      );
+    }
+
+    // Get user details
     const user = await this.usersService.findById(userId);
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // Find user's wallet
+    // Get user's wallet
     const wallet = await this.walletRepository.findOne({
       where: { userId },
     });
@@ -124,10 +134,14 @@ export class WalletService {
       throw new NotFoundException('Wallet not found');
     }
 
-    // Generate unique reference (timestamp + UUID)
-    const reference = `TXN_${Date.now()}_${uuidv4().split('-')[0]}`;
+    // Generate unique reference per copilot instructions
+    const reference = `TXN_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-    // Create pending transaction BEFORE calling Paystack
+    this.logger.log(
+      `Initializing deposit - User: ${userId}, Amount: ${amount} KOBO (₦${amount / 100}), Reference: ${reference}`,
+    );
+
+    // Create pending transaction per copilot instructions
     const transaction = this.transactionRepository.create({
       walletId: wallet.id,
       type: 'deposit',
@@ -135,43 +149,37 @@ export class WalletService {
       status: 'pending',
       reference,
       metadata: {
-        userId,
         email: user.email,
-        timestamp: new Date().toISOString(),
+        userId,
+        wallet_number: wallet.walletNumber,
       },
     });
 
     await this.transactionRepository.save(transaction);
 
-    this.logger.log(`Pending transaction created: ${reference}`);
-
     try {
-      // Call Paystack API to initialize transaction
+      // Initialize Paystack transaction
       const paystackResponse = await this.paystackService.initializeTransaction(
-        amount, // Amount in KOBO
+        amount,
         user.email,
         reference,
       );
 
-      // Update transaction metadata with Paystack response
-      transaction.metadata = {
-        ...transaction.metadata,
-        paystack: {
-          authorization_url: paystackResponse.authorization_url,
-          access_code: paystackResponse.access_code,
-        },
-      };
-      await this.transactionRepository.save(transaction);
+      this.logger.log(
+        `✅ Deposit initialized - Reference: ${reference}, URL: ${paystackResponse.authorization_url}`,
+      );
 
-      this.logger.log(`Paystack transaction initialized: ${reference}`);
-
+      // Return in standard API format per copilot instructions
       return {
-        reference,
-        authorization_url: paystackResponse.authorization_url,
-        access_code: paystackResponse.access_code,
+        status: 'success',
+        data: {
+          reference: paystackResponse.reference,
+          authorization_url: paystackResponse.authorization_url,
+        },
+        message: 'Deposit initialized successfully',
       };
     } catch (error) {
-      // Update transaction status to failed
+      // If Paystack initialization fails, mark transaction as failed
       transaction.status = 'failed';
       transaction.metadata = {
         ...transaction.metadata,
@@ -180,7 +188,7 @@ export class WalletService {
       await this.transactionRepository.save(transaction);
 
       this.logger.error(
-        `Paystack initialization failed for ${reference}: ${error.message}`,
+        `❌ Deposit initialization failed - Reference: ${reference}, Error: ${error.message}`,
       );
 
       throw error;
